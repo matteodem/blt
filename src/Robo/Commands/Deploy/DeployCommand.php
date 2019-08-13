@@ -5,6 +5,7 @@ namespace Acquia\Blt\Robo\Commands\Deploy;
 use Acquia\Blt\Robo\BltTasks;
 use Acquia\Blt\Robo\Exceptions\BltException;
 use Robo\Contract\VerbosityThresholdInterface;
+use Robo\Result;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Finder\Finder;
 
@@ -130,6 +131,23 @@ class DeployCommand extends BltTasks {
     }
     else {
       $this->deployToBranch($options);
+    }
+  }
+
+  /**
+   * Throw a blt exception on unsuccesful run.
+   *
+   * @param \Robo\Result $result
+   *   Result of the command run.
+   * @param string $message
+   *   Message of exception.
+   *
+   * @throws \Acquia\Blt\Robo\Exceptions\BltException
+   *   Exception to throw when unsuccessful.
+   */
+  protected function throwExceptionOnUnsuccesfulRun(Result $result, string $message = 'Command run was unsuccessful') {
+    if (!$result->wasSuccessful()) {
+      throw new BltException($message);
     }
   }
 
@@ -295,19 +313,25 @@ class DeployCommand extends BltTasks {
     $this->taskDeleteDir($deploy_dir)
       ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
       ->run();
-    $this->taskFilesystemStack()
+
+    $this->throwExceptionOnUnsuccesfulRun(
+      $this->taskFilesystemStack()
       ->mkdir($this->deployDir)
       ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
       ->stopOnFail()
-      ->run();
-    $this->taskExecStack()
-      ->dir($deploy_dir)
-      ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
-      ->stopOnFail()
-      ->exec("git init")
-      ->exec("git config --local core.excludesfile false")
-      ->exec("git config --local core.fileMode true")
-      ->run();
+      ->run()
+    );
+
+    $this->throwExceptionOnUnsuccesfulRun(
+      $this->taskExecStack()
+        ->dir($deploy_dir)
+        ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
+        ->stopOnFail()
+        ->exec("git init")
+        ->exec("git config --local core.excludesfile false")
+        ->exec("git config --local core.fileMode true")
+        ->run()
+    );
     $this->say("Global .gitignore file is being disabled for this repository to prevent unexpected behavior.");
   }
 
@@ -333,24 +357,26 @@ class DeployCommand extends BltTasks {
   protected function addGitRemote($remote_url) {
     // Generate an md5 sum of the remote URL to use as remote name.
     $remote_name = md5($remote_url);
-    $this->taskExecStack()
+    $result = $this->taskExecStack()
       ->stopOnFail()
       ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
       ->dir($this->deployDir)
       ->exec("git remote add $remote_name $remote_url")
       ->run();
+    $this->throwExceptionOnUnsuccesfulRun($result);
   }
 
   /**
    * Checks out a new, local branch for artifact.
    */
   protected function checkoutLocalDeployBranch() {
-    $this->taskExecStack()
+    $result = $this->taskExecStack()
       ->dir($this->deployDir)
       ->stopOnFail()
       ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
       ->exec("git checkout -b {$this->branchName}")
       ->run();
+    $this->throwExceptionOnUnsuccesfulRun($result);
   }
 
   /**
@@ -387,13 +413,14 @@ class DeployCommand extends BltTasks {
     }
 
     // Now we know the remote branch exists, let's fetch and merge it.
-    $this->taskExecStack()
+    $result = $this->taskExecStack()
       ->dir($this->deployDir)
       ->stopOnFail()
       ->exec("git fetch $remote_name {$this->branchName} --depth=1")
       ->exec("git merge $remote_name/{$this->branchName}")
       ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
       ->run();
+    $this->throwExceptionOnUnsuccesfulRun($result);
   }
 
   /**
@@ -440,11 +467,12 @@ class DeployCommand extends BltTasks {
 
     $this->setMultisiteFilePermissions(0777);
     $this->say("Rsyncing files from source repo into the build artifact...");
-    $this->taskExecStack()->exec("rsync -a --no-g --delete --delete-excluded --exclude-from='$exclude_list_file' '$source/' '$dest/' --filter 'protect /.git/'")
+    $result = $this->taskExecStack()->exec("rsync -a --no-g --delete --delete-excluded --exclude-from='$exclude_list_file' '$source/' '$dest/' --filter 'protect /.git/'")
       ->setVerbosityThreshold(VerbosityThresholdInterface::VERBOSITY_VERBOSE)
       ->stopOnFail()
       ->dir($this->getConfigValue('repo.root'))
       ->run();
+    $this->throwExceptionOnUnsuccesfulRun($result);
     $this->setMultisiteFilePermissions(0755);
 
     // Remove temporary file that may have been created by
@@ -488,10 +516,12 @@ class DeployCommand extends BltTasks {
     if ($this->ignorePlatformReqs) {
       $command .= ' --ignore-platform-reqs';
     }
-    $this->taskExecStack()->exec($command)
+
+    $result = $this->taskExecStack()->exec($command)
       ->stopOnFail()
       ->dir($this->deployDir)
       ->run();
+    $this->throwExceptionOnUnsuccesfulRun($result);
   }
 
   /**
@@ -663,9 +693,7 @@ class DeployCommand extends BltTasks {
     }
     $result = $task->run();
 
-    if (!$result->wasSuccessful()) {
-      throw new BltException("Failed to push deployment artifact!");
-    }
+    $this->throwExceptionOnUnsuccesfulRun($result, 'Failed to push deployment artifact!');
   }
 
   /**
